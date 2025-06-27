@@ -1012,89 +1012,88 @@ const CalendarApp = () => {
   return (
     <div className="max-w-7xl mx-auto p-4">
       {/* ヘッダー */}
-      <div className="flex justify-between items-center mb-6">
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={() => {
-                const newDate = new Date(currentDate);
-                if (view === 'month') {
-                  newDate.setMonth(newDate.getMonth() - 1);
-                } else {
-                  newDate.setDate(newDate.getDate() - 7);
-                }
-                setCurrentDate(newDate);
-              }}
-              className="p-2 hover:bg-gray-100 rounded"
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-            <h2 className="text-xl font-semibold min-w-48 text-center">
-              {view === 'month' ? (
-                `${currentDate.getFullYear()}年${currentDate.getMonth() + 1}月`
-              ) : (
-                `${currentDate.getFullYear()}年${currentDate.getMonth() + 1}月`
-              )}
-            </h2>
-            <button
-              onClick={() => {
-                const newDate = new Date(currentDate);
-                if (view === 'month') {
-                  newDate.setMonth(newDate.getMonth() + 1);
-                } else {
-                  newDate.setDate(newDate.getDate() + 7);
-                }
-                setCurrentDate(newDate);
-              }}
-              className="p-2 hover:bg-gray-100 rounded"
-            >
-              <ChevronRight className="w-5 h-5" />
-            </button>
-            <button
-              onClick={() => setCurrentDate(new Date())}
-              className="ml-4 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
-            >
-              今日
-            </button>
-          </div>
+      <div className="flex flex-col sm:flex-row sm:justify-between items-start sm:items-center mb-6">
+        <div className="left-buttons flex space-x-2">
+          <button
+            onClick={() => {
+              const newDate = new Date(currentDate);
+              if (view === 'month') {
+                newDate.setMonth(newDate.getMonth() - 1);
+              } else {
+                newDate.setDate(newDate.getDate() - 7);
+              }
+              setCurrentDate(newDate);
+            }}
+            className="p-2 hover:bg-gray-100 rounded"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <h2 className="text-xl font-semibold min-w-48 text-center">
+            {view === 'month' ? (
+              `${currentDate.getFullYear()}年${currentDate.getMonth() + 1}月`
+            ) : (
+              `${currentDate.getFullYear()}年${currentDate.getMonth() + 1}月`
+            )}
+          </h2>
+          <button
+            onClick={() => {
+              const newDate = new Date(currentDate);
+              if (view === 'month') {
+                newDate.setMonth(newDate.getMonth() + 1);
+              } else {
+                newDate.setDate(newDate.getDate() + 7);
+              }
+              setCurrentDate(newDate);
+            }}
+            className="p-2 hover:bg-gray-100 rounded"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => setCurrentDate(new Date())}
+            className="ml-4 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            今日
+          </button>
         </div>
-        
-        <div className="flex items-center space-x-2">
+
+        {/* Second row of buttons: responsive flex layout for mobile */}
+        <div className="right-buttons button-row flex flex-row flex-wrap justify-between w-full sm:w-auto space-x-2 mt-2 sm:mt-0">
           <button
             onClick={() => setActiveTab('journal')}
-            className="p-2 bg-purple-500 text-white rounded hover:bg-purple-600"
+            className="flex-1 text-center p-2 bg-purple-500 text-white rounded hover:bg-purple-600"
             title="日記"
           >
             <BookOpen className="w-5 h-5" />
           </button>
           <button
             onClick={() => setShowEventModal(true)}
-            className="p-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            className="flex-1 text-center p-2 bg-blue-500 text-white rounded hover:bg-blue-600"
             title="イベント追加"
           >
             <Plus className="w-5 h-5" />
           </button>
           <div
-            className={`p-2 rounded-full cursor-pointer ${showFreeTime ? 'bg-green-200' : 'bg-gray-200'}`}
+            className={`flex-1 text-center p-2 rounded-full cursor-pointer ${showFreeTime ? 'bg-green-200' : 'bg-gray-200'}`}
             onClick={() => setShowFreeTime(prev => !prev)}
             title="空き時間表示切り替え"
           >
-            <EyeIcon className="w-5 h-5 text-gray-800" />
+            <EyeIcon className="w-5 h-5 text-gray-800 mx-auto" />
           </div>
-          <div className="flex bg-gray-200 rounded">
+          <div className="flex flex-row flex-1 bg-gray-200 rounded">
             <button
               onClick={() => setView('month')}
-              className={`p-2 rounded ${view === 'month' ? 'bg-blue-500 text-white' : 'text-gray-700'}`}
+              className={`flex-1 text-center p-2 rounded ${view === 'month' ? 'bg-blue-500 text-white' : 'text-gray-700'}`}
               title="月表示"
             >
-              <Calendar className="w-5 h-5" />
+              <Calendar className="w-5 h-5 mx-auto" />
             </button>
             <button
               onClick={() => setView('week')}
-              className={`p-2 rounded ${view === 'week' ? 'bg-blue-500 text-white' : 'text-gray-700'}`}
+              className={`flex-1 text-center p-2 rounded ${view === 'week' ? 'bg-blue-500 text-white' : 'text-gray-700'}`}
               title="週表示"
             >
-              <Clock className="w-5 h-5" />
+              <Clock className="w-5 h-5 mx-auto" />
             </button>
           </div>
         </div>
