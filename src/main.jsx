@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Calendar, Clock, Tag, BookOpen, Copy, Mail, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Calendar, Clock, Tag, BookOpen, Copy, Mail, Search, EyeIcon } from 'lucide-react';
 
 const CalendarApp = () => {
+  // 新しい空き時間表示トグル
+  const [showAvailability, setShowAvailability] = useState(false);
+  const toggleAvailability = () => setShowAvailability(!showAvailability);
   // 日本時間でのDate作成関数
   const createJapanDate = (year, month, day, hour = 0, minute = 0) => {
     return new Date(year, month, day, hour, minute);
@@ -17,7 +20,9 @@ const CalendarApp = () => {
   const [selectedTime, setSelectedTime] = useState('');
   const [editingEvent, setEditingEvent] = useState(null);
   const [searchTag, setSearchTag] = useState('');
-  const [showFreeTime, setShowFreeTime] = useState(true); // 空き時間の表示切り替え
+  // 複数タグ選択用
+  const [selectedTags, setSelectedTags] = useState([]);
+  const [showFreeTime, setShowFreeTime] = useState(false); // 空き時間の表示切り替え
   const [selectedNode, setSelectedNode] = useState(null); // 選択されたノード
   
   // イベントカラー
@@ -357,11 +362,10 @@ const CalendarApp = () => {
     const dayOfWeek = ['日', '月', '火', '水', '木', '金', '土'][date.getDay()];
     const startTimeStr = formatTime(startTime);
     const endTimeStr = formatTime(endTime);
-    
-    const copyText = `${month}月${day}日（${dayOfWeek}）${startTimeStr}〜${endTimeStr}`;
-    
+    // 例: "1月6日11:00~11:30"
+    const copyText = `${month}月${day}日${startTimeStr}~${endTimeStr}`;
     navigator.clipboard.writeText(copyText).then(() => {
-      alert(`クリップボードにコピーしました: ${copyText}`);
+      alert("コピーしました");
     });
   };
 
@@ -446,6 +450,9 @@ const CalendarApp = () => {
   };
 
   // 週表示カレンダーのレンダリング
+  // 削除: 週ビューの空き時間表示切り替えボタン
+  // Helper: 曜日文字列
+  const weekDayStr = (date) => ['日', '月', '火', '水', '木', '金', '土'][date.getDay()];
   const renderWeekView = () => {
     const weekStart = getWeekStart(currentDate);
     const weekDates = Array.from({ length: 7 }, (_, i) => {
@@ -455,7 +462,7 @@ const CalendarApp = () => {
     });
 
     return (
-      <div className="flex">
+      <div className="flex relative">
         {/* 時間軸 */}
         <div className="w-16 flex-shrink-0">
           <div className="h-14 border-b border-gray-200"></div>
@@ -470,6 +477,8 @@ const CalendarApp = () => {
         {weekDates.map((date, dayIndex) => {
           const isToday = date.toDateString() === today.toDateString();
           const dayEvents = getEventsForDate(date);
+          // 空き時間ブロック
+          const dayAvailBlocks = getFreeTimeBlocks(date);
 
           return (
             <div key={dayIndex} className="flex-1 border-r border-gray-200">
@@ -483,40 +492,48 @@ const CalendarApp = () => {
 
               {/* 時間スロット */}
               <div className="relative">
+                {/* 空き時間ブロック */}
                 {showFreeTime && (
-                  /* 空き時間ブロック */
-                  getFreeTimeBlocks(date).map((block, blockIndex) => {
-                    const startHour = block.start.getHours() + (block.start.getMinutes() / 60);
-                    const endHour = block.end.getHours() + (block.end.getMinutes() / 60);
-                    const topPosition = startHour * 32; // 32px per hour
-                    const height = (endHour - startHour) * 32;
-                    
-                    return (
-                      <div
-                        key={`free-${blockIndex}`}
-                        className="absolute left-1 right-1 bg-green-100 border border-green-200 text-green-700 text-xs p-1 rounded cursor-pointer hover:bg-green-200 z-5"
-                        style={{ 
-                          top: `${topPosition}px`, 
-                          height: `${height}px` 
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleFreeTimeBlockClick(date, block.start, block.end);
-                        }}
-                        title="クリックしてコピー"
-                      >
-                        <div className="font-medium text-xs">空き時間</div>
-                        <div className="text-xs">
-                          {formatTime(block.start)}-{formatTime(block.end)}
+                  <div>
+                    {dayAvailBlocks.map((block, idx) => {
+                      // 表示用
+                      const startTimeStr = formatTime(block.start);
+                      const endTimeStr = formatTime(block.end);
+                      const month = date.getMonth() + 1;
+                      const day = date.getDate();
+                      const availText = `${month}月${day}日 ${startTimeStr}~${endTimeStr}`;
+                      // 位置計算
+                      const top =
+                        (block.start.getHours() + block.start.getMinutes() / 60) * 32 + 0; // 32px/1h
+                      const height =
+                        ((block.end - block.start) / (1000 * 60 * 60)) * 32;
+                      return (
+                        <div
+                          key={idx}
+                          className="absolute left-1 right-1 bg-green-300 bg-opacity-80 text-green-900 border border-green-400 rounded px-2 py-1 text-xs font-semibold cursor-pointer z-30 hover:bg-green-400 transition-all"
+                          style={{
+                            top: `${top}px`,
+                            height: `${height}px`,
+                            minHeight: '32px',
+                            display: 'flex',
+                            alignItems: 'center'
+                          }}
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            // クリップボードにコピー
+                            await navigator.clipboard.writeText(availText);
+                          }}
+                          title="クリックで時間帯をコピー"
+                        >
+                          <span>{availText}</span>
                         </div>
-                      </div>
-                    );
-                  })
+                      );
+                    })}
+                  </div>
                 )}
-                
+                {/* 既存のイベントスロット */}
                 {timeSlots.map((timeSlot, timeIndex) => {
                   const slotEvents = getEventsForTimeSlot(date, timeSlot);
-                  
                   return (
                     <div
                       key={timeIndex}
@@ -527,18 +544,16 @@ const CalendarApp = () => {
                       {slotEvents.map(event => {
                         const eventStart = new Date(event.start);
                         const eventEnd = new Date(event.end);
-                        const slotStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 
+                        const slotStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(),
                           parseInt(timeSlot.split(':')[0]), 0);
-                        
                         // イベントがこのスロットで開始する場合のみ表示
                         if (eventStart.getTime() === slotStart.getTime()) {
                           const duration = (eventEnd - eventStart) / (1000 * 60); // 分単位
                           const height = (duration / 60) * 32; // 60分 = 32px
-                          
                           return (
                             <div
                               key={event.id}
-                              className={`absolute left-1 right-1 ${event.color.value} text-white text-xs p-1 rounded cursor-pointer z-10`}
+                              className={`absolute left-1 right-1 ${event.color.value} text-white text-xs p-1 rounded cursor-pointer z-20`}
                               style={{ height: `${height}px` }}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -569,12 +584,13 @@ const CalendarApp = () => {
 
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className="bg-white rounded-lg p-6 w-96 max-h-96 overflow-y-auto">
+        {/* Popup modal container: make larger (max-w-lg) */}
+        <div className="modal-container mx-auto mt-10 p-6 bg-white rounded shadow-md max-w-lg w-full">
           <h3 className="text-lg font-semibold mb-4">
             {editingEvent ? 'イベント編集' : 'イベント追加'}
           </h3>
-          
-          <div className="space-y-4">
+
+          <div className="space-y-5">
             <div>
               <label className="block text-sm font-medium mb-1">タイトル</label>
               <input
@@ -584,7 +600,7 @@ const CalendarApp = () => {
                 onChange={(e) => setEventForm({...eventForm, title: e.target.value})}
               />
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium mb-1">日付</label>
               <input
@@ -594,8 +610,8 @@ const CalendarApp = () => {
                 onChange={(e) => setEventForm({...eventForm, date: e.target.value})}
               />
             </div>
-            
-            <div className="grid grid-cols-2 gap-2">
+
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium mb-1">開始時間</label>
                 <input
@@ -615,22 +631,49 @@ const CalendarApp = () => {
                 />
               </div>
             </div>
-            
+
+            {/* Color selection blocks */}
             <div>
-              <label className="block text-sm font-medium mb-1">カラー</label>
-              <div className="grid grid-cols-4 gap-2">
-                {eventColors.map((color, index) => (
-                  <button
-                    key={index}
-                    className={`w-8 h-8 rounded border-2 ${color.value} ${
-                      eventForm.color.value === color.value ? 'ring-2 ring-gray-400' : ''
-                    }`}
-                    onClick={() => setEventForm({...eventForm, color: color})}
+              <label className="block text-sm font-medium text-gray-700 mb-1">色カテゴリ</label>
+              <div className="flex items-center space-x-3 mb-2">
+                {eventColors.map((color, idx) => (
+                  <div
+                    key={color.value}
+                    className={`w-6 h-6 rounded-full cursor-pointer border-2 flex-shrink-0 ${eventForm.color.value === color.value ? 'border-black' : 'border-transparent'} ${color.value}`}
+                    style={{}}
+                    onClick={() => setEventForm({ ...eventForm, color })}
+                    title={color.name}
                   />
                 ))}
               </div>
             </div>
-            
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">カテゴリ</label>
+              <select
+                value={eventForm.color && eventForm.color.value ? eventForm.color.value : ''}
+                onChange={(e) => {
+                  // Define color options mapping for dropdown
+                  const colorMap = {
+                    '#fbd38d': { name: 'Study', value: '#fbd38d', border: '' },
+                    '#68d391': { name: 'Personal', value: '#68d391', border: '' },
+                    '#fefcbf': { name: 'Job hunting', value: '#fefcbf', border: '' },
+                    '#c3dafe': { name: 'Intern', value: '#c3dafe', border: '' },
+                    '#fc8181': { name: '人と会う', value: '#fc8181', border: '' }
+                  };
+                  const selected = colorMap[e.target.value] || { name: '', value: e.target.value, border: '' };
+                  setEventForm({ ...eventForm, color: selected });
+                }}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+              >
+                <option value="#fbd38d">Study</option>
+                <option value="#68d391">Personal</option>
+                <option value="#fefcbf">Job hunting</option>
+                <option value="#c3dafe">Intern</option>
+                <option value="#fc8181">人と会う</option>
+              </select>
+            </div>
+
             <div>
               <label className="block text-sm font-medium mb-1">タグ（カンマ区切り）</label>
               <input
@@ -641,18 +684,18 @@ const CalendarApp = () => {
                 placeholder="会議, プロジェクト, 重要"
               />
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium mb-1">メモ</label>
               <textarea
-                className="w-full border border-gray-300 rounded px-3 py-2 h-20"
+                className="w-full border border-gray-300 rounded px-3 py-2 h-24"
                 value={eventForm.notes}
                 onChange={(e) => setEventForm({...eventForm, notes: e.target.value})}
               />
             </div>
           </div>
-          
-          <div className="flex justify-between mt-6">
+
+          <div className="flex justify-between mt-8">
             <div>
               {editingEvent && (
                 <button
@@ -688,14 +731,30 @@ const CalendarApp = () => {
 
   // ツェッテルカステン風日記ビューのレンダリング
   const renderJournalView = () => {
+    // ハイライト用関数
+    const getHighlightStyle = (count) => {
+      if (count >= 9) return { background: "linear-gradient(135deg, #fff7ed 0%, #fef3c7 100%)", borderLeft: "4px solid #f59e0b" };
+      if (count >= 7) return { background: "#fef3c7", borderLeft: "4px solid #fbbf24" };
+      if (count >= 5) return { background: "#fed7aa", borderLeft: "4px solid #fbbf24" };
+      if (count >= 3) return { background: "#fff7ed", borderLeft: "4px solid #f59e0b" };
+      if (count >= 1) return { background: "#fff7ed", borderLeft: "4px solid #fed7aa" };
+      return {};
+    };
     const allTags = [...new Set(events.flatMap(event => event.tags))];
-    const filteredEvents = searchTag 
-      ? events.filter(event => 
-          event.tags.some(tag => tag.toLowerCase().includes(searchTag.toLowerCase())) ||
-          event.title.toLowerCase().includes(searchTag.toLowerCase()) ||
-          (event.notes && event.notes.toLowerCase().includes(searchTag.toLowerCase()))
+    // タグ複数選択フィルタ
+    const filteredEvents = (selectedTags.length > 0)
+      ? events.filter(event =>
+          selectedTags.every(tag => event.tags.includes(tag))
         )
-      : events;
+      : (
+        searchTag
+          ? events.filter(event => 
+              event.tags.some(tag => tag.toLowerCase().includes(searchTag.toLowerCase())) ||
+              event.title.toLowerCase().includes(searchTag.toLowerCase()) ||
+              (event.notes && event.notes.toLowerCase().includes(searchTag.toLowerCase()))
+            )
+          : events
+      );
 
     return (
       <div className="bg-white rounded-lg shadow p-6">
@@ -726,25 +785,31 @@ const CalendarApp = () => {
               </button>
             )}
           </div>
-          
           {/* タグクラウド */}
           <div className="flex flex-wrap gap-2">
             {allTags.map(tag => {
               const tagEvents = events.filter(e => e.tags.includes(tag));
               const intensity = Math.min(tagEvents.length / 3, 1);
+              const isSelected = selectedTags.includes(tag);
               return (
                 <button
                   key={tag}
                   className={`text-sm px-3 py-1 rounded-full transition-all duration-200 ${
-                    searchTag === tag 
-                      ? 'bg-blue-500 text-white shadow-md' 
+                    isSelected
+                      ? 'bg-blue-500 text-white shadow-md'
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                   }`}
-                  style={{ 
+                  style={{
                     opacity: 0.6 + (intensity * 0.4),
                     fontSize: `${0.875 + (intensity * 0.125)}rem`
                   }}
-                  onClick={() => setSearchTag(searchTag === tag ? '' : tag)}
+                  onClick={() => {
+                    if (isSelected) {
+                      setSelectedTags(selectedTags.filter(t => t !== tag));
+                    } else {
+                      setSelectedTags([...selectedTags, tag]);
+                    }
+                  }}
                 >
                   {tag} <span className="text-xs">({tagEvents.length})</span>
                 </button>
@@ -756,20 +821,22 @@ const CalendarApp = () => {
         {/* ニューラルネットワーク表示 */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* メインノード */}
-          <div className="lg:col-span-2 space-y-4 max-h-96 overflow-y-auto">
+          <div className="lg:col-span-2 space-y-4 max-h-[480px] overflow-y-auto">
             {filteredEvents.sort((a, b) => b.start - a.start).map(event => {
               const connections = getNodeConnections(event);
               const insights = generateInsights(event);
               const isSelected = selectedNode?.id === event.id;
-              
+              // connectionCount = connections.length
+              const connectionCount = connections.length;
               return (
-                <div 
-                  key={event.id} 
+                <div
+                  key={event.id}
                   className={`border rounded-lg p-4 cursor-pointer transition-all duration-200 ${
-                    isSelected 
-                      ? 'border-blue-500 bg-blue-50 shadow-md' 
+                    isSelected
+                      ? 'border-blue-500 bg-blue-50 shadow-md'
                       : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
-                  }`}
+                  } diary-card`}
+                  style={getHighlightStyle(connectionCount)}
                   onClick={() => setSelectedNode(isSelected ? null : event)}
                 >
                   {/* ノードヘッダー */}
@@ -779,7 +846,7 @@ const CalendarApp = () => {
                         <h4 className="font-semibold text-lg">{event.title}</h4>
                         <div className={`w-3 h-3 rounded-full ${event.color.value}`}></div>
                         <span className="text-xs bg-gray-100 px-2 py-1 rounded">
-                          {connections.length}個の接続
+                          <span style={{ color: "#f59e0b" }}>{connections.length}</span>個の接続
                         </span>
                       </div>
                       <div className="text-sm text-gray-600">
@@ -844,7 +911,7 @@ const CalendarApp = () => {
                                 />
                               </div>
                               <span className="text-xs text-gray-500 w-8">
-                                {Math.round(connection.strength * 100)}%
+                                <span style={{ color: "#f59e0b" }}>{Math.round(connection.strength * 100)}</span>%
                               </span>
                             </div>
                           </div>
@@ -939,6 +1006,9 @@ const CalendarApp = () => {
     );
   };
 
+  // トグルボタン用関数
+  const toggleFreeTime = () => setShowFreeTime(prev => !prev);
+
   return (
     <div className="max-w-7xl mx-auto p-4">
       {/* ヘッダー */}
@@ -991,13 +1061,6 @@ const CalendarApp = () => {
         
         <div className="flex items-center space-x-2">
           <button
-            onClick={() => setShowFreeTime(!showFreeTime)}
-            className={`p-2 rounded ${showFreeTime ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-700'} hover:opacity-80`}
-            title="空き時間表示切り替え"
-          >
-            <Clock className="w-5 h-5" />
-          </button>
-          <button
             onClick={() => setActiveTab('journal')}
             className="p-2 bg-purple-500 text-white rounded hover:bg-purple-600"
             title="日記"
@@ -1011,6 +1074,13 @@ const CalendarApp = () => {
           >
             <Plus className="w-5 h-5" />
           </button>
+          <div
+            className={`p-2 rounded-full cursor-pointer ${showFreeTime ? 'bg-green-200' : 'bg-gray-200'}`}
+            onClick={() => setShowFreeTime(prev => !prev)}
+            title="空き時間表示切り替え"
+          >
+            <EyeIcon className="w-5 h-5 text-gray-800" />
+          </div>
           <div className="flex bg-gray-200 rounded">
             <button
               onClick={() => setView('month')}
@@ -1059,7 +1129,61 @@ const CalendarApp = () => {
       {/* カレンダー表示 */}
       {activeTab === 'calendar' && (
         <div className="bg-white rounded-lg shadow">
-          {view === 'month' ? renderMonthView() : renderWeekView()}
+          {view === 'month' ? (
+            <>
+              {showFreeTime && (
+                <div className="p-4 mb-4">
+                  {/* 空き時間ブロックを表示 */}
+                  {(() => {
+                    // 当月の日付を取得
+                    const firstDay = getFirstDayOfMonth(currentDate);
+                    const daysInMonth = getDaysInMonth(currentDate);
+                    const daysArray = Array.from({ length: daysInMonth }, (_, i) => {
+                      return new Date(currentDate.getFullYear(), currentDate.getMonth(), i + 1);
+                    });
+                    return (
+                      <div>
+                        <h3 className="font-semibold mb-2 text-green-700">空き時間ブロック（月内、1時間以上）</h3>
+                        <div className="space-y-2">
+                          {daysArray.map(date => {
+                            const freeBlocks = getFreeTimeBlocks(date);
+                            if (freeBlocks.length === 0) return null;
+                            return (
+                              <div key={date.toISOString()} className="bg-green-50 border border-green-200 rounded p-2">
+                                <div className="font-medium mb-1">
+                                  {date.getMonth() + 1}月{date.getDate()}日（{weekDays[date.getDay()]}）
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  {freeBlocks.map((block, idx) => {
+                                    const startStr = formatTime(block.start);
+                                    const endStr = formatTime(block.end);
+                                    const text = `${startStr}~${endStr}`;
+                                    return (
+                                      <button
+                                        key={idx}
+                                        className="bg-green-200 text-green-900 px-3 py-1 rounded shadow text-xs hover:bg-green-300"
+                                        onClick={() => handleFreeTimeBlockClick(date, block.start, block.end)}
+                                        title="クリックでコピー"
+                                      >
+                                        {text}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+              {renderMonthView()}
+            </>
+          ) : (
+            renderWeekView()
+          )}
         </div>
       )}
       
