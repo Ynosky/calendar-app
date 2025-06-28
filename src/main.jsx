@@ -34,7 +34,40 @@ const CalendarApp = () => {
   const [showFreeTime, setShowFreeTime] = useState(false); // 空き時間の表示切り替え
   const [selectedNode, setSelectedNode] = useState(null); // 選択されたノード
   
-  // イベントカラー
+  // 気分連動カラーシステム
+  const moodColors = [
+    // 低い気分 (1-3): 寒色系
+    { mood: 1, name: '辛い', emoji: '😢', color: 'bg-gray-500', border: 'border-gray-500', gradient: 'from-gray-400 to-gray-600' },
+    { mood: 2, name: '悲しい', emoji: '😔', color: 'bg-blue-600', border: 'border-blue-600', gradient: 'from-blue-500 to-blue-700' },
+    { mood: 3, name: '沈んでる', emoji: '😞', color: 'bg-indigo-500', border: 'border-indigo-500', gradient: 'from-indigo-400 to-indigo-600' },
+    
+    // 普通の気分 (4-6): 中間色
+    { mood: 4, name: '少し憂鬱', emoji: '😐', color: 'bg-purple-500', border: 'border-purple-500', gradient: 'from-purple-400 to-purple-600' },
+    { mood: 5, name: '普通', emoji: '😊', color: 'bg-green-500', border: 'border-green-500', gradient: 'from-green-400 to-green-600' },
+    { mood: 6, name: 'まあまあ', emoji: '🙂', color: 'bg-teal-500', border: 'border-teal-500', gradient: 'from-teal-400 to-teal-600' },
+    
+    // 高い気分 (7-10): 暖色系
+    { mood: 7, name: '良い', emoji: '😄', color: 'bg-yellow-500', border: 'border-yellow-500', gradient: 'from-yellow-400 to-yellow-600' },
+    { mood: 8, name: 'とても良い', emoji: '😁', color: 'bg-orange-500', border: 'border-orange-500', gradient: 'from-orange-400 to-orange-600' },
+    { mood: 9, name: '最高', emoji: '🤩', color: 'bg-pink-500', border: 'border-pink-500', gradient: 'from-pink-400 to-pink-600' },
+    { mood: 10, name: '超最高！', emoji: '🥳', color: 'bg-red-500', border: 'border-red-500', gradient: 'from-red-400 to-red-600' }
+  ];
+
+  // 気分から色データを取得（Firebase形式に合わせて変換）
+  const getMoodColorData = (mood) => {
+    const moodData = moodColors.find(m => m.mood === mood) || moodColors[4]; // デフォルトは普通(5)
+    
+    // Firebase の既存形式に合わせて color オブジェクトを返す
+    return {
+      name: moodData.name,
+      value: moodData.color,  // "bg-orange-500" → Firebase の color フィールド
+      border: moodData.border, // "border-orange-500" → Firebase の border フィールド
+      emoji: moodData.emoji,
+      gradient: moodData.gradient // プレビュー用
+    };
+  };
+
+  // 従来のカラーシステム（互換性のため残す）
   const eventColors = [
     { name: 'ブルー', value: 'bg-blue-500', border: 'border-blue-500' },
     { name: 'グリーン', value: 'bg-green-500', border: 'border-green-500' },
@@ -52,11 +85,27 @@ const CalendarApp = () => {
   // 初回読み込み時にFirestoreからイベントを取得
   useEffect(() => {
     loadEventsFromFirestore().then(fetchedEvents => {
-      // tagsフィールドが配列であることを保証
-      const normalizedEvents = fetchedEvents.map(ev => ({
-        ...ev,
-        tags: Array.isArray(ev.tags) ? ev.tags : [],
-      }));
+      // tagsフィールドが配列であることを保証 + moodフィールドを追加 + 色データを復元
+      const normalizedEvents = fetchedEvents.map(ev => {
+        const mood = ev.mood || 5; // 既存イベントにmoodがない場合はデフォルト値
+        
+        // 既存の色データがある場合はそれを使用、なければ mood から生成
+        let colorData;
+        if (ev.color && ev.color.value) {
+          // 既存の Firebase 形式の色データが存在
+          colorData = ev.color;
+        } else {
+          // mood から色データを生成
+          colorData = getMoodColorData(mood);
+        }
+        
+        return {
+          ...ev,
+          tags: Array.isArray(ev.tags) ? ev.tags : [],
+          mood: mood,
+          color: colorData
+        };
+      });
       setEvents(normalizedEvents);
     });
 
@@ -144,9 +193,27 @@ const CalendarApp = () => {
       const newEvents = [];
       for (const googleEvent of googleEvents) {
         if (!isDuplicateEvent(googleEvent, events)) {
-          // Firestoreに保存
-          await saveEventToFirestore(googleEvent);
-          newEvents.push(googleEvent);
+          // Google Calendar イベントにデフォルト気分を追加
+          const defaultMood = 5;
+          const moodColorData = getMoodColorData(defaultMood);
+          const eventWithMood = { 
+            ...googleEvent, 
+            mood: defaultMood,
+            color: moodColorData // 適切な色オブジェクトを設定
+          };
+          
+          // Firebase形式でFirestoreに保存（正しいcolor形式で）
+          await saveEventToFirestore({
+            id: eventWithMood.id,
+            title: eventWithMood.title,
+            start: eventWithMood.start,
+            end: eventWithMood.end,
+            tags: eventWithMood.tags,
+            notes: eventWithMood.notes,
+            mood: eventWithMood.mood,
+            color: eventWithMood.color // 既に適切な形式のcolorオブジェクト
+          });
+          newEvents.push(eventWithMood);
         } else {
           console.log(`重複のため追加をスキップ: ${googleEvent.title}`);
         }
@@ -180,7 +247,7 @@ const CalendarApp = () => {
     date: '',
     startTime: '',
     endTime: '',
-    color: eventColors[0],
+    mood: 5, // 1-10の気分スケール（デフォルト: 普通）
     tags: '',
     notes: ''
   });
@@ -376,10 +443,17 @@ const CalendarApp = () => {
   const handleAddEvent = async (newEvent) => {
     // Ensure tags is always an array
     const tagsArray = Array.isArray(newEvent.tags) ? newEvent.tags : [];
+    
+    // Firebase形式でデータを保存（正しいcolor形式で）
     await saveEventToFirestore({
-      ...newEvent,
+      id: newEvent.id,
+      title: newEvent.title,
+      start: newEvent.start,
+      end: newEvent.end,
       tags: tagsArray,
       notes: newEvent.notes || '',
+      mood: newEvent.mood,
+      color: newEvent.color // 既に適切な形式のcolorオブジェクト
     });
     setEvents((prev) => [...prev, { ...newEvent, tags: tagsArray }]);
   };
@@ -395,29 +469,47 @@ const CalendarApp = () => {
     const [startHour, startMinute] = eventForm.startTime.split(':').map(Number);
     const [endHour, endMinute] = eventForm.endTime.split(':').map(Number);
 
+    // 開始日時と終了日時を作成
+    const startDate = createJapanDate(year, month - 1, day, startHour, startMinute);
+    let endDate = createJapanDate(year, month - 1, day, endHour, endMinute);
+
+    // 終了時間が開始時間より早い場合、翌日に設定
+    if (endDate <= startDate) {
+      endDate = new Date(endDate.getTime() + 24 * 60 * 60 * 1000); // 24時間追加
+    }
+
     // tagsを配列として保存
     const formTags = eventForm.tags
       ? eventForm.tags.split(',').map(tag => tag.trim()).filter(tag => tag)
       : [];
 
+    // 気分に基づいた色データを取得
+    const moodColorData = getMoodColorData(eventForm.mood);
+
     const newEvent = {
-      id: editingEvent ? editingEvent.id : Date.now(),
+      id: editingEvent ? editingEvent.id : Date.now().toString(),
       title: eventForm.title,
-      start: createJapanDate(year, month - 1, day, startHour, startMinute),
-      end: createJapanDate(year, month - 1, day, endHour, endMinute),
-      color: eventForm.color,
+      start: startDate,
+      end: endDate,
+      color: moodColorData, // 気分に基づいた完全な色オブジェクト
+      mood: eventForm.mood, // 気分を保存
       tags: Array.isArray(formTags) ? formTags : [],
       notes: eventForm.notes || '',
     };
 
     if (editingEvent) {
-      // Firestoreへの保存処理
+      // Firestoreへの保存処理（正しいcolor形式で）
       await saveEventToFirestore({
-        ...newEvent,
-        tags: Array.isArray(formTags) ? formTags : [],
-        notes: newEvent.notes || '',
+        id: newEvent.id,
+        title: newEvent.title,
+        start: newEvent.start,
+        end: newEvent.end,
+        tags: newEvent.tags,
+        notes: newEvent.notes,
+        mood: newEvent.mood,
+        color: newEvent.color // 既に適切な形式のcolorオブジェクト
       });
-      setEvents(events.map(event => event.id === editingEvent.id ? { ...newEvent, tags: Array.isArray(formTags) ? formTags : [] } : event));
+      setEvents(events.map(event => event.id === editingEvent.id ? newEvent : event));
     } else {
       await handleAddEvent(newEvent);
     }
@@ -429,7 +521,7 @@ const CalendarApp = () => {
       date: '',
       startTime: '',
       endTime: '',
-      color: eventColors[0],
+      mood: 5, // デフォルト気分
       tags: '',
       notes: ''
     });
@@ -455,7 +547,7 @@ const CalendarApp = () => {
       date: formatDate(event.start),
       startTime: formatTime(event.start),
       endTime: formatTime(event.end),
-      color: event.color,
+      mood: event.mood || 5, // 既存イベントの気分を復元
       tags: Array.isArray(event.tags) ? event.tags.join(', ') : '',
       notes: event.notes || ''
     });
@@ -469,7 +561,8 @@ const CalendarApp = () => {
       ...eventForm,
       date: formatDate(date),
       startTime: '09:00',
-      endTime: '10:00'
+      endTime: '10:00',
+      mood: 5 // デフォルト気分
     });
     setShowEventModal(true);
   };
@@ -485,7 +578,8 @@ const CalendarApp = () => {
       ...eventForm,
       date: formatDate(date),
       startTime: timeSlot,
-      endTime: `${endHour.toString().padStart(2, '0')}:00`
+      endTime: `${endHour.toString().padStart(2, '0')}:00`,
+      mood: 5 // デフォルト気分
     });
     setShowEventModal(true);
   };
@@ -719,125 +813,291 @@ const CalendarApp = () => {
   const renderEventModal = () => {
     if (!showEventModal) return null;
 
+    const currentMoodData = getMoodColorData(eventForm.mood);
+
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        {/* Popup modal container: make larger (max-w-lg) */}
-        <div className="modal-container mx-auto mt-10 p-6 bg-white rounded shadow-md max-w-lg w-full">
-          <h3 className="text-lg font-semibold mb-4">
-            {editingEvent ? 'イベント編集' : 'イベント追加'}
-          </h3>
-
-          <div className="space-y-5">
-            <div>
-              <label className="block text-sm font-medium mb-1">タイトル</label>
-              <input
-                type="text"
-                className="w-full border border-gray-300 rounded px-3 py-2"
-                value={eventForm.title}
-                onChange={(e) => setEventForm({...eventForm, title: e.target.value})}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">日付</label>
-              <input
-                type="date"
-                className="w-full border border-gray-300 rounded px-3 py-2"
-                value={eventForm.date}
-                onChange={(e) => setEventForm({...eventForm, date: e.target.value})}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">開始時間</label>
-                <input
-                  type="time"
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                  value={eventForm.startTime}
-                  onChange={(e) => setEventForm({...eventForm, startTime: e.target.value})}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">終了時間</label>
-                <input
-                  type="time"
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                  value={eventForm.endTime}
-                  onChange={(e) => setEventForm({...eventForm, endTime: e.target.value})}
-                />
-              </div>
-            </div>
-
-            {/* Color selection blocks */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">色カテゴリ</label>
-              <div className="flex items-center space-x-3 mb-2">
-                {eventColors.map((color, idx) => (
-                  <div
-                    key={color.value}
-                    className={`w-6 h-6 rounded-full cursor-pointer border-2 flex-shrink-0 ${eventForm.color.value === color.value ? 'border-black' : 'border-transparent'} ${color.value}`}
-                    style={{}}
-                    onClick={() => setEventForm({ ...eventForm, color })}
-                    title={color.name}
-                  />
-                ))}
-              </div>
-            </div>
-
-
-            <div>
-              <label className="block text-sm font-medium mb-1">タグ（カンマ区切り）</label>
-              <input
-                type="text"
-                className="w-full border border-gray-300 rounded px-3 py-2"
-                value={eventForm.tags}
-                onChange={(e) => setEventForm({...eventForm, tags: e.target.value})}
-                placeholder="会議, プロジェクト, 重要"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">ノート</label>
-              <textarea
-                className="w-full border border-gray-300 rounded px-3 py-2 h-24"
-                value={eventForm.notes}
-                onChange={(e) => setEventForm({...eventForm, notes: e.target.value})}
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-between mt-8">
-            <div>
-              {editingEvent && editingEvent.id && (
-                <button
-                  onClick={() => handleDelete(editingEvent.id)}
-                  className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
+      <>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-end sm:items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-lg max-h-[85vh] sm:max-h-[90vh] overflow-hidden animate-slide-up">
+            
+            {/* ヘッダー */}
+            <div className={`bg-gradient-to-r ${currentMoodData?.gradient} text-white p-6`}>
+              {/* モバイル用：スワイプインジケーター */}
+              <div className="w-12 h-1 bg-white bg-opacity-30 rounded-full mx-auto mb-4 sm:hidden"></div>
+              
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center">
+                  <span className="text-4xl mr-3">{currentMoodData?.emoji}</span>
+                  <div>
+                    <h3 className="text-xl font-bold">
+                      {editingEvent ? '思い出を編集' : '新しい思い出'}
+                    </h3>
+                    <p className="text-white text-opacity-80 text-sm">気分: {currentMoodData?.name}</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => {
+                    setShowEventModal(false);
+                    setEditingEvent(null);
+                    setEventForm({
+                      title: '',
+                      date: '',
+                      startTime: '',
+                      endTime: '',
+                      mood: 5,
+                      tags: '',
+                      notes: ''
+                    });
+                  }}
+                  className="text-white hover:bg-white hover:bg-opacity-20 rounded-full p-2 transition-all"
                 >
-                  削除
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
                 </button>
-              )}
+              </div>
+
+              {/* タイトル入力をヘッダーに移動 */}
+              <div>
+                <input
+                  type="text"
+                  className="w-full bg-white bg-opacity-20 border-2 border-white border-opacity-30 rounded-xl px-4 py-3 text-lg text-white placeholder-white placeholder-opacity-70 focus:bg-opacity-30 focus:border-opacity-60 focus:ring-0 focus:outline-none transition-all"
+                  value={eventForm.title}
+                  onChange={(e) => setEventForm({...eventForm, title: e.target.value})}
+                  placeholder="何をしましたか？"
+                />
+              </div>
             </div>
-            <div className="space-x-2">
-              <button
-                className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
-                onClick={() => {
-                  setShowEventModal(false);
-                  setEditingEvent(null);
-                }}
-              >
-                キャンセル
-              </button>
-              <button
-                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                onClick={handleEventSubmit}
-              >
-                {editingEvent ? '更新' : '作成'}
-              </button>
+
+            {/* コンテンツエリア - スクロール可能 */}
+            <div className="overflow-y-auto flex-1" style={{ maxHeight: 'calc(85vh - 180px)' }}>
+              <div className="p-6 space-y-6">
+
+                {/* 気分スライダー */}
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-3 flex items-center">
+                    <span className="mr-2">💝</span>
+                    今日の気分 ({eventForm.mood}/10)
+                  </label>
+                  
+                  {/* 気分スライダー */}
+                  <div className="relative">
+                    <input
+                      type="range"
+                      min="1"
+                      max="10"
+                      value={eventForm.mood}
+                      onChange={(e) => setEventForm({...eventForm, mood: parseInt(e.target.value)})}
+                      className="w-full h-3 rounded-lg appearance-none cursor-pointer slider"
+                      style={{
+                        background: `linear-gradient(to right, #6b7280 0%, #3b82f6 20%, #8b5cf6 40%, #10b981 50%, #eab308 60%, #f97316 80%, #ef4444 100%)`
+                      }}
+                    />
+                    <div className="flex justify-between text-xs text-gray-500 mt-2">
+                      <span>😢 辛い</span>
+                      <span>😊 普通</span>
+                      <span>🥳 最高</span>
+                    </div>
+                  </div>
+
+                  {/* 選択された気分の表示 */}
+                  <div className={`mt-4 p-4 rounded-xl bg-gradient-to-r ${currentMoodData?.gradient} bg-opacity-20 border-l-4 ${currentMoodData?.color}`}>
+                    <div className="flex items-center">
+                      <span className="text-3xl mr-3">{currentMoodData?.emoji}</span>
+                      <div>
+                        <div className="font-bold text-gray-800">{currentMoodData?.name}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* タグ */}
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center">
+                    <span className="mr-2">🏷️</span>
+                    タグ
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-orange-400 focus:ring-0 focus:outline-none transition-all"
+                    value={eventForm.tags}
+                    onChange={(e) => setEventForm({...eventForm, tags: e.target.value})}
+                    placeholder="楽しい, リラックス"
+                  />
+                </div>
+
+                {/* ノート */}
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center">
+                    <span className="mr-2">📝</span>
+                    今日の記録
+                  </label>
+                  <textarea
+                    className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-base leading-relaxed resize-none focus:border-orange-400 focus:ring-0 focus:outline-none transition-all"
+                    value={eventForm.notes}
+                    onChange={(e) => setEventForm({...eventForm, notes: e.target.value})}
+                    placeholder="今日はどんな一日でしたか？
+
+• 何を感じましたか？
+• 何を学びましたか？
+• 良かったことは？
+
+自由に書いてください..."
+                    rows={6}
+                  />
+                  <div className="text-xs text-gray-500 mt-1 text-right">
+                    {eventForm.notes.length} 文字
+                  </div>
+                </div>
+
+                {/* 日時 */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">日付</label>
+                    <input
+                      type="date"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-orange-400 focus:ring-0 focus:outline-none"
+                      value={eventForm.date}
+                      onChange={(e) => setEventForm({...eventForm, date: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">開始</label>
+                    <input
+                      type="time"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-orange-400 focus:ring-0 focus:outline-none"
+                      value={eventForm.startTime}
+                      onChange={(e) => setEventForm({...eventForm, startTime: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">終了</label>
+                    <input
+                      type="time"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-orange-400 focus:ring-0 focus:outline-none"
+                      value={eventForm.endTime}
+                      onChange={(e) => setEventForm({...eventForm, endTime: e.target.value})}
+                    />
+                  </div>
+                </div>
+
+                {/* 気分カラーのプレビュー */}
+                <div className="bg-gray-50 rounded-xl p-4">
+                  <div className="text-sm font-medium text-gray-700 mb-2">📊 カレンダー表示プレビュー</div>
+                  <div className={`p-3 rounded-lg ${currentMoodData?.color} bg-gradient-to-r ${currentMoodData?.gradient} bg-opacity-80 shadow-sm`}>
+                    <div className="flex items-center justify-between text-white">
+                      <div>
+                        <div className="font-medium">{eventForm.title || '新しいイベント'}</div>
+                        <div className="text-sm opacity-90">{eventForm.startTime} - {eventForm.endTime}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
             </div>
+
+            {/* フッター：固定ボタン */}
+            <div className="border-t border-gray-200 p-4 bg-white">
+              <div className="flex space-x-3">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setShowEventModal(false);
+                    setEditingEvent(null);
+                    setEventForm({
+                      title: '',
+                      date: '',
+                      startTime: '',
+                      endTime: '',
+                      mood: 5,
+                      tags: '',
+                      notes: ''
+                    });
+                  }}
+                  className="flex-1 py-3 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl font-medium transition-all"
+                >
+                  キャンセル
+                </button>
+                {editingEvent && (
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(editingEvent.id)}
+                    className="py-3 px-4 bg-red-500 hover:bg-red-600 text-white rounded-xl font-medium transition-all"
+                  >
+                    🗑️
+                  </button>
+                )}
+                <button 
+                  type="button"
+                  onClick={handleEventSubmit}
+                  className={`flex-2 py-3 px-6 bg-gradient-to-r ${currentMoodData?.gradient} hover:scale-105 text-white rounded-xl font-bold transition-all shadow-lg flex items-center justify-center`}
+                >
+                  <span className="mr-2">💾</span>
+                  {editingEvent ? '更新' : '保存'}
+                </button>
+              </div>
+            </div>
+
           </div>
         </div>
-      </div>
+        
+        {/* CSS スタイル */}
+        <style jsx>{`
+          .animate-slide-up {
+            animation: slideUp 0.3s ease-out;
+          }
+          
+          @keyframes slideUp {
+            from {
+              transform: translateY(100%);
+              opacity: 0;
+            }
+            to {
+              transform: translateY(0);
+              opacity: 1;
+            }
+          }
+          
+          .slider::-webkit-slider-thumb {
+            appearance: none;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: white;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            cursor: pointer;
+            border: 3px solid #f97316;
+          }
+          
+          .slider::-moz-range-thumb {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: white;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            cursor: pointer;
+            border: 3px solid #f97316;
+          }
+          
+          @media (max-width: 640px) {
+            .animate-slide-up {
+              animation: slideUpMobile 0.3s ease-out;
+            }
+            
+            @keyframes slideUpMobile {
+              from {
+                transform: translateY(50%);
+                opacity: 0;
+              }
+              to {
+                transform: translateY(0);
+                opacity: 1;
+              }
+            }
+          }
+        `}</style>
+      </>
     );
   };
 
