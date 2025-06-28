@@ -1,8 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { saveEventToFirestore, loadEventsFromFirestore, deleteEventFromFirestore } from './firebase/saveEvents';
-import { ChevronLeft, ChevronRight, Plus, Calendar, Clock, Tag, BookOpen, Copy, Mail, Search, Eye } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Calendar, Clock, Tag, BookOpen, Copy, Mail, Search, Eye, RefreshCw } from 'lucide-react';
+import GoogleCalendarSync from './google/googleCalendar';
 
 const CalendarApp = () => {
+  // Google Calendar同期関連の状態
+  const [isGoogleConnected, setIsGoogleConnected] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [googleSync, setGoogleSync] = useState(null);
+  const [googleApiLoaded, setGoogleApiLoaded] = useState(false);
+  const [initializationAttempted, setInitializationAttempted] = useState(false); // 初期化試行フラグ
+
   // 新しい空き時間表示トグル
   const [showAvailability, setShowAvailability] = useState(false);
   const toggleAvailability = () => setShowAvailability(!showAvailability);
@@ -51,7 +59,121 @@ const CalendarApp = () => {
       }));
       setEvents(normalizedEvents);
     });
-  }, []);
+
+    // Google API初期化（一度だけ）
+    if (!initializationAttempted) {
+      const timer = setTimeout(() => {
+        initializeGoogleAPI();
+      }, 1000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [initializationAttempted]);
+
+  // Google Calendar同期初期化
+  const initializeGoogleAPI = async () => {
+    if (initializationAttempted) return; // 重複実行防止
+    
+    setInitializationAttempted(true);
+    
+    try {
+      console.log('Google API初期化開始');
+      const sync = new GoogleCalendarSync();
+      await sync.initialize();
+      setGoogleSync(sync);
+      setGoogleApiLoaded(true);
+      console.log('Google Calendar API初期化完了');
+    } catch (error) {
+      console.error('Google API初期化エラー:', error);
+      setGoogleApiLoaded(false);
+      // 初期化に失敗した場合、フラグをリセットして手動再試行可能にする
+      setInitializationAttempted(false);
+    }
+  };
+
+  // 重複チェック関数
+  const isDuplicateEvent = (newEvent, existingEvents) => {
+    return existingEvents.some(existing => {
+      // 同日同名のイベントをチェック
+      const sameDay = 
+        existing.start.getFullYear() === newEvent.start.getFullYear() &&
+        existing.start.getMonth() === newEvent.start.getMonth() &&
+        existing.start.getDate() === newEvent.start.getDate();
+      
+      const sameName = existing.title.toLowerCase() === newEvent.title.toLowerCase();
+      
+      return sameDay && sameName;
+    });
+  };
+
+  // カレンダー一覧確認用のデバッグ関数
+  const debugCalendarList = async () => {
+    if (!googleSync) {
+      alert('Google APIが初期化されていません');
+      return;
+    }
+
+    try {
+      await googleSync.listAvailableCalendars();
+      alert('カレンダー一覧をConsole（F12）で確認してください');
+    } catch (error) {
+      console.error('カレンダー一覧取得エラー:', error);
+      alert('カレンダー一覧の取得に失敗しました: ' + error.message);
+    }
+  };
+
+  // Google Calendar同期実行
+  const syncWithGoogleCalendar = async () => {
+    // Google API読み込みチェック
+    if (!googleApiLoaded || !googleSync) {
+      // 初期化が失敗していた場合、再試行
+      if (!initializationAttempted) {
+        alert('Google APIを初期化しています...');
+        await initializeGoogleAPI();
+        return;
+      }
+      alert('Google APIの初期化に失敗しました。ページを再読み込みしてください。');
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      const googleEvents = await googleSync.fetchCurrentMonthEvents();
+
+      // 重複チェックと追加
+      const newEvents = [];
+      for (const googleEvent of googleEvents) {
+        if (!isDuplicateEvent(googleEvent, events)) {
+          // Firestoreに保存
+          await saveEventToFirestore(googleEvent);
+          newEvents.push(googleEvent);
+        } else {
+          console.log(`重複のため追加をスキップ: ${googleEvent.title}`);
+        }
+      }
+
+      // ローカル状態を更新
+      if (newEvents.length > 0) {
+        setEvents(prev => [...prev, ...newEvents]);
+        alert(`${newEvents.length}件のイベントをsatoryu@keio.jpから同期しました`);
+      } else {
+        alert('新しいイベントはありませんでした');
+      }
+
+      setIsGoogleConnected(true);
+    } catch (error) {
+      console.error('同期エラー:', error);
+      if (error.message.includes('アクセス権限がありません')) {
+        alert('satoryu@keio.jpのカレンダーへのアクセス権限がありません。カレンダーの共有設定を確認してください。');
+      } else if (error.message.includes('not signed in') || error.message.includes('Authentication')) {
+        alert('Googleアカウントの認証が必要です。再度お試しください。');
+      } else {
+        alert('Google Calendarとの同期に失敗しました: ' + error.message);
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const [eventForm, setEventForm] = useState({
     title: '',
@@ -279,7 +401,7 @@ const CalendarApp = () => {
       : [];
 
     const newEvent = {
-      id: editingEvent ? editingEvent.id : Date.now().toString(),
+      id: editingEvent ? editingEvent.id : Date.now(),
       title: eventForm.title,
       start: createJapanDate(year, month - 1, day, startHour, startMinute),
       end: createJapanDate(year, month - 1, day, endHour, endMinute),
@@ -1051,11 +1173,30 @@ const CalendarApp = () => {
         {/* Second row of buttons: responsive flex layout for mobile */}
         <div className="right-buttons button-row flex flex-row flex-wrap justify-between w-full sm:w-auto space-x-2 mt-2 sm:mt-0">
           <button
-            onClick={() => setActiveTab('journal')}
-            className="flex-1 text-center p-2 bg-purple-500 text-white rounded hover:bg-purple-600"
-            title="日記"
+            onClick={syncWithGoogleCalendar}
+            disabled={isSyncing || !googleApiLoaded}
+            className={`flex-1 text-center p-2 rounded hover:bg-green-600 ${
+              isSyncing 
+                ? 'bg-gray-400 cursor-not-allowed' 
+                : !googleApiLoaded
+                  ? 'bg-gray-300 cursor-not-allowed'
+                  : isGoogleConnected 
+                    ? 'bg-green-500 text-white' 
+                    : 'bg-blue-500 text-white'
+            }`}
+            title={
+              isSyncing 
+                ? '同期中...' 
+                : !googleApiLoaded 
+                  ? 'Google API読み込み中...'
+                  : 'Google Calendar同期'
+            }
           >
-            <BookOpen className="w-5 h-5" />
+            {isSyncing ? (
+              <RefreshCw className="w-5 h-5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-5 h-5" />
+            )}
           </button>
           <button
             onClick={() => setShowEventModal(true)}
