@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Calendar, Clock, Tag, BookOpen, Copy, Mail, Search, EyeIcon } from 'lucide-react';
+import { saveEventToFirestore, loadEventsFromFirestore, deleteEventFromFirestore } from './firebase/saveEvents';
+import { ChevronLeft, ChevronRight, Plus, Calendar, Clock, Tag, BookOpen, Copy, Mail, Search, Eye } from 'lucide-react';
 
 const CalendarApp = () => {
   // 新しい空き時間表示トグル
@@ -37,36 +38,20 @@ const CalendarApp = () => {
     { name: 'インディゴ', value: 'bg-indigo-500', border: 'border-indigo-500' }
   ];
 
-  // サンプルデータ
-  const [events, setEvents] = useState([
-    {
-      id: 1,
-      title: 'チームミーティング',
-      start: createJapanDate(2025, 5, 28, 10, 0), // 6月28日 10:00
-      end: createJapanDate(2025, 5, 28, 11, 30),   // 6月28日 11:30
-      color: eventColors[0],
-      tags: ['会議', 'チーム', '企画'],
-      notes: 'Q3の目標設定について議論。新プロジェクトの進捗確認も行った。'
-    },
-    {
-      id: 2,
-      title: 'クライアント打ち合わせ',
-      start: createJapanDate(2025, 5, 28, 14, 0), // 6月28日 14:00
-      end: createJapanDate(2025, 5, 28, 15, 30),   // 6月28日 15:30
-      color: eventColors[2],
-      tags: ['クライアント', '営業', '重要'],
-      notes: 'ABC株式会社との新規案件について。要件定義の詳細を確認。次回までに提案書を準備する。'
-    },
-    {
-      id: 3,
-      title: 'プレゼン準備',
-      start: createJapanDate(2025, 5, 29, 9, 0),  // 6月29日 09:00
-      end: createJapanDate(2025, 5, 29, 12, 0),    // 6月29日 12:00
-      color: eventColors[4],
-      tags: ['プレゼン', '準備', '重要'],
-      notes: '来週の役員プレゼンの資料作成。データ分析結果をグラフ化し、提案内容を整理。'
-    }
-  ]);
+  // イベントデータ
+  const [events, setEvents] = useState([]);
+
+  // 初回読み込み時にFirestoreからイベントを取得
+  useEffect(() => {
+    loadEventsFromFirestore().then(fetchedEvents => {
+      // tagsフィールドが配列であることを保証
+      const normalizedEvents = fetchedEvents.map(ev => ({
+        ...ev,
+        tags: Array.isArray(ev.tags) ? ev.tags : [],
+      }));
+      setEvents(normalizedEvents);
+    });
+  }, []);
 
   const [eventForm, setEventForm] = useState({
     title: '',
@@ -265,8 +250,20 @@ const CalendarApp = () => {
     return insights;
   };
 
+  // イベント追加
+  const handleAddEvent = async (newEvent) => {
+    // Ensure tags is always an array
+    const tagsArray = Array.isArray(newEvent.tags) ? newEvent.tags : [];
+    await saveEventToFirestore({
+      ...newEvent,
+      tags: tagsArray,
+      notes: newEvent.notes || '',
+    });
+    setEvents((prev) => [...prev, { ...newEvent, tags: tagsArray }]);
+  };
+
   // イベント追加/編集
-  const handleEventSubmit = () => {
+  const handleEventSubmit = async () => {
     if (!eventForm.title || !eventForm.date || !eventForm.startTime || !eventForm.endTime) {
       alert('必要な項目を入力してください');
       return;
@@ -276,20 +273,31 @@ const CalendarApp = () => {
     const [startHour, startMinute] = eventForm.startTime.split(':').map(Number);
     const [endHour, endMinute] = eventForm.endTime.split(':').map(Number);
 
+    // tagsを配列として保存
+    const formTags = eventForm.tags
+      ? eventForm.tags.split(',').map(tag => tag.trim()).filter(tag => tag)
+      : [];
+
     const newEvent = {
-      id: editingEvent ? editingEvent.id : Date.now(),
+      id: editingEvent ? editingEvent.id : Date.now().toString(),
       title: eventForm.title,
       start: createJapanDate(year, month - 1, day, startHour, startMinute),
       end: createJapanDate(year, month - 1, day, endHour, endMinute),
       color: eventForm.color,
-      tags: eventForm.tags.split(',').map(tag => tag.trim()).filter(tag => tag),
-      notes: eventForm.notes
+      tags: Array.isArray(formTags) ? formTags : [],
+      notes: eventForm.notes || '',
     };
 
     if (editingEvent) {
-      setEvents(events.map(event => event.id === editingEvent.id ? newEvent : event));
+      // Firestoreへの保存処理
+      await saveEventToFirestore({
+        ...newEvent,
+        tags: Array.isArray(formTags) ? formTags : [],
+        notes: newEvent.notes || '',
+      });
+      setEvents(events.map(event => event.id === editingEvent.id ? { ...newEvent, tags: Array.isArray(formTags) ? formTags : [] } : event));
     } else {
-      setEvents([...events, newEvent]);
+      await handleAddEvent(newEvent);
     }
 
     setShowEventModal(false);
@@ -306,10 +314,15 @@ const CalendarApp = () => {
   };
 
   // イベント削除
-  const handleDeleteEvent = (eventId) => {
-    setEvents(events.filter(event => event.id !== eventId));
-    setShowEventModal(false);
-    setEditingEvent(null);
+  const handleDelete = async (id) => {
+    try {
+      await deleteEventFromFirestore(id);
+      setEvents(prev => prev.filter(event => event.id !== id)); // Update local state
+      setShowEventModal(false); // Optionally close the modal
+      setEditingEvent(null);
+    } catch (error) {
+      console.error('Failed to delete event:', error);
+    }
   };
 
   // イベント編集開始
@@ -321,7 +334,7 @@ const CalendarApp = () => {
       startTime: formatTime(event.start),
       endTime: formatTime(event.end),
       color: event.color,
-      tags: event.tags.join(', '),
+      tags: Array.isArray(event.tags) ? event.tags.join(', ') : '',
       notes: event.notes || ''
     });
     setShowEventModal(true);
@@ -371,7 +384,7 @@ const CalendarApp = () => {
 
   // タグベースでのメール送信
   const handleTagEmail = (tag) => {
-    const relatedEvents = events.filter(event => event.tags.includes(tag));
+    const relatedEvents = events.filter(event => Array.isArray(event.tags) && event.tags.includes(tag));
     const emailBody = relatedEvents.map(event => {
       const dateStr = formatDateTimeString(event.start);
       const timeStr = `${formatTime(event.start)}~${formatTime(event.end)}`;
@@ -385,8 +398,10 @@ const CalendarApp = () => {
 
   // 関連イベントを取得（同じタグを持つ過去のイベント）
   const getRelatedEvents = (tags) => {
-    return events.filter(event => 
-      event.tags.some(tag => tags.includes(tag)) && event.start < new Date()
+    return events.filter(event =>
+      Array.isArray(event.tags) &&
+      event.tags.some(tag => tags.includes(tag)) &&
+      event.start < new Date()
     ).sort((a, b) => b.start - a.start);
   };
 
@@ -648,31 +663,6 @@ const CalendarApp = () => {
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">カテゴリ</label>
-              <select
-                value={eventForm.color && eventForm.color.value ? eventForm.color.value : ''}
-                onChange={(e) => {
-                  // Define color options mapping for dropdown
-                  const colorMap = {
-                    '#fbd38d': { name: 'Study', value: '#fbd38d', border: '' },
-                    '#68d391': { name: 'Personal', value: '#68d391', border: '' },
-                    '#fefcbf': { name: 'Job hunting', value: '#fefcbf', border: '' },
-                    '#c3dafe': { name: 'Intern', value: '#c3dafe', border: '' },
-                    '#fc8181': { name: '人と会う', value: '#fc8181', border: '' }
-                  };
-                  const selected = colorMap[e.target.value] || { name: '', value: e.target.value, border: '' };
-                  setEventForm({ ...eventForm, color: selected });
-                }}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-              >
-                <option value="#fbd38d">Study</option>
-                <option value="#68d391">Personal</option>
-                <option value="#fefcbf">Job hunting</option>
-                <option value="#c3dafe">Intern</option>
-                <option value="#fc8181">人と会う</option>
-              </select>
-            </div>
 
             <div>
               <label className="block text-sm font-medium mb-1">タグ（カンマ区切り）</label>
@@ -686,7 +676,7 @@ const CalendarApp = () => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">メモ</label>
+              <label className="block text-sm font-medium mb-1">ノート</label>
               <textarea
                 className="w-full border border-gray-300 rounded px-3 py-2 h-24"
                 value={eventForm.notes}
@@ -697,10 +687,10 @@ const CalendarApp = () => {
 
           <div className="flex justify-between mt-8">
             <div>
-              {editingEvent && (
+              {editingEvent && editingEvent.id && (
                 <button
-                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
-                  onClick={() => handleDeleteEvent(editingEvent.id)}
+                  onClick={() => handleDelete(editingEvent.id)}
+                  className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
                 >
                   削除
                 </button>
@@ -740,16 +730,16 @@ const CalendarApp = () => {
       if (count >= 1) return { background: "#fff7ed", borderLeft: "4px solid #fed7aa" };
       return {};
     };
-    const allTags = [...new Set(events.flatMap(event => event.tags))];
+    const allTags = [...new Set(events.flatMap(event => Array.isArray(event.tags) ? event.tags : []))];
     // タグ複数選択フィルタ
     const filteredEvents = (selectedTags.length > 0)
       ? events.filter(event =>
-          selectedTags.every(tag => event.tags.includes(tag))
+          Array.isArray(event.tags) && selectedTags.every(tag => event.tags.includes(tag))
         )
       : (
         searchTag
-          ? events.filter(event => 
-              event.tags.some(tag => tag.toLowerCase().includes(searchTag.toLowerCase())) ||
+          ? events.filter(event =>
+              (Array.isArray(event.tags) && event.tags.some(tag => tag.toLowerCase().includes(searchTag.toLowerCase()))) ||
               event.title.toLowerCase().includes(searchTag.toLowerCase()) ||
               (event.notes && event.notes.toLowerCase().includes(searchTag.toLowerCase()))
             )
@@ -788,7 +778,7 @@ const CalendarApp = () => {
           {/* タグクラウド */}
           <div className="flex flex-wrap gap-2">
             {allTags.map(tag => {
-              const tagEvents = events.filter(e => e.tags.includes(tag));
+              const tagEvents = events.filter(e => Array.isArray(e.tags) && e.tags.includes(tag));
               const intensity = Math.min(tagEvents.length / 3, 1);
               const isSelected = selectedTags.includes(tag);
               return (
@@ -857,7 +847,7 @@ const CalendarApp = () => {
                   
                   {/* タグネットワーク */}
                   <div className="flex flex-wrap gap-1 mb-3">
-                    {event.tags.map(tag => (
+                    {(Array.isArray(event.tags) ? event.tags : []).map(tag => (
                       <button
                         key={tag}
                         className="text-xs px-2 py-1 bg-gray-100 rounded-full hover:bg-gray-200 flex items-center"
@@ -956,14 +946,15 @@ const CalendarApp = () => {
                   <h5 className="font-semibold text-green-800 mb-2">🌿 知識の成長</h5>
                   <div className="text-sm space-y-1">
                     {(() => {
-                      const sameTags = events.filter(e => 
-                        e.id !== selectedNode.id && 
+                      const sameTags = events.filter(e =>
+                        e.id !== selectedNode.id &&
+                        Array.isArray(e.tags) &&
+                        Array.isArray(selectedNode.tags) &&
                         e.tags.some(tag => selectedNode.tags.includes(tag))
                       );
-                      const recentRelated = sameTags.filter(e => 
+                      const recentRelated = sameTags.filter(e =>
                         Math.abs(e.start - selectedNode.start) < 7 * 24 * 60 * 60 * 1000
                       );
-                      
                       return (
                         <>
                           <div>同系統ノード: {sameTags.length}個</div>
@@ -992,7 +983,7 @@ const CalendarApp = () => {
               <div className="text-sm space-y-1">
                 <div>総ノード数: {events.length}</div>
                 <div>ユニークタグ: {allTags.length}</div>
-                <div>平均タグ数: {(events.reduce((sum, e) => sum + e.tags.length, 0) / events.length).toFixed(1)}</div>
+                <div>平均タグ数: {(events.reduce((sum, e) => sum + (Array.isArray(e.tags) ? e.tags.length : 0), 0) / (events.length || 1)).toFixed(1)}</div>
                 <div>最大接続ノード: {(() => {
                   const maxConnections = Math.max(...events.map(e => getNodeConnections(e).length));
                   const maxNode = events.find(e => getNodeConnections(e).length === maxConnections);
@@ -1078,7 +1069,7 @@ const CalendarApp = () => {
             onClick={() => setShowFreeTime(prev => !prev)}
             title="空き時間表示切り替え"
           >
-            <EyeIcon className="w-5 h-5 text-gray-800 mx-auto" />
+            <Eye className="w-5 h-5 text-gray-800 mx-auto" />
           </div>
           <div className="flex flex-row flex-1 bg-gray-200 rounded">
             <button
